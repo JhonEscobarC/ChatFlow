@@ -16,7 +16,7 @@ import {
   AreaChart,
   Area,
 } from "recharts"
-import { useMemo, useCallback, useRef, useState } from "react"
+import { useMemo, useCallback, useState } from "react"
 import { FileDown, Loader2 } from "lucide-react"
 
 const agentPerformance = [
@@ -57,7 +57,6 @@ const statusBarColorMap: Record<string, string> = {
 }
 
 export function ReportsView() {
-  const reportContentRef = useRef<HTMLDivElement>(null)
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false)
 
   const statusDistribution = useMemo(() => {
@@ -83,97 +82,266 @@ export function ReportsView() {
   const totalRevenue = agentSalesData.reduce((a, b) => a + b.ingresos, 0)
 
   const handleGeneratePDF = useCallback(async () => {
-    if (!reportContentRef.current || isGeneratingPDF) return
-
+    if (isGeneratingPDF) return
     setIsGeneratingPDF(true)
 
     try {
-      const [html2canvasModule, jsPDFModule] = await Promise.all([
-        import("html2canvas"),
-        import("jspdf"),
-      ])
-      const html2canvas = html2canvasModule.default
+      const jsPDFModule = await import("jspdf")
       const { jsPDF } = jsPDFModule
 
-      const element = reportContentRef.current
+      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" })
+      const pageW = 210
+      const pageH = 297
+      const margin = 15
+      const contentW = pageW - margin * 2
+      let y = margin
 
-      const canvas = await html2canvas(element, {
-        scale: 2,
-        useCORS: true,
-        logging: false,
-        backgroundColor: "#ffffff",
-        windowWidth: element.scrollWidth,
-        windowHeight: element.scrollHeight,
-      })
-
-      const imgData = canvas.toDataURL("image/png")
-      const imgWidth = canvas.width
-      const imgHeight = canvas.height
-
-      const pdfWidth = 210
-      const pdfImageWidth = pdfWidth - 20
-      const pdfImageHeight = (imgHeight * pdfImageWidth) / imgWidth
-
-      const pdf = new jsPDF({
-        orientation: pdfImageHeight > 297 * 2 ? "portrait" : "portrait",
-        unit: "mm",
-        format: "a4",
-      })
-
-      const pageHeight = 297
-      const margin = 10
-      const usableHeight = pageHeight - margin * 2
-
-      if (pdfImageHeight <= usableHeight) {
-        pdf.addImage(imgData, "PNG", margin, margin, pdfImageWidth, pdfImageHeight)
-      } else {
-        let remainingHeight = pdfImageHeight
-        let yOffset = 0
-        let page = 0
-
-        while (remainingHeight > 0) {
-          if (page > 0) {
-            pdf.addPage()
-          }
-
-          const sliceHeight = Math.min(usableHeight, remainingHeight)
-          const sourceY = (yOffset / pdfImageHeight) * imgHeight
-          const sourceHeight = (sliceHeight / pdfImageHeight) * imgHeight
-
-          const sliceCanvas = document.createElement("canvas")
-          sliceCanvas.width = imgWidth
-          sliceCanvas.height = sourceHeight
-          const ctx = sliceCanvas.getContext("2d")
-          if (ctx) {
-            ctx.drawImage(
-              canvas,
-              0,
-              sourceY,
-              imgWidth,
-              sourceHeight,
-              0,
-              0,
-              imgWidth,
-              sourceHeight,
-            )
-            const sliceData = sliceCanvas.toDataURL("image/png")
-            pdf.addImage(sliceData, "PNG", margin, margin, pdfImageWidth, sliceHeight)
-          }
-
-          yOffset += sliceHeight
-          remainingHeight -= sliceHeight
-          page++
+      const checkPage = (needed: number) => {
+        if (y + needed > pageH - margin) {
+          pdf.addPage()
+          y = margin
         }
       }
 
+      // --- Header ---
+      pdf.setFillColor(22, 163, 74)
+      pdf.rect(0, 0, pageW, 28, "F")
+      pdf.setTextColor(255, 255, 255)
+      pdf.setFontSize(18)
+      pdf.setFont("helvetica", "bold")
+      pdf.text("ChatFlow - Reporte General", margin, 12)
+      pdf.setFontSize(10)
+      pdf.setFont("helvetica", "normal")
       const now = new Date()
+      pdf.text(`Generado: ${now.toLocaleDateString("es-CO")} ${now.toLocaleTimeString("es-CO")}`, margin, 20)
+      y = 36
+
+      // --- Summary cards ---
+      pdf.setTextColor(60, 60, 60)
+      pdf.setFontSize(13)
+      pdf.setFont("helvetica", "bold")
+      pdf.text("Resumen General", margin, y)
+      y += 6
+
+      const summaryItems = [
+        { label: "Conversaciones resueltas", value: String(totalResolved) },
+        { label: "Pendientes", value: String(totalPending) },
+        { label: "Productos vendidos", value: String(totalProductsSold) },
+        { label: "Ingresos totales", value: `$${totalRevenue.toLocaleString("es-CO")}` },
+        { label: "Satisfaccion promedio", value: `${avgSatisfaction.toFixed(1)}%` },
+        { label: "Agentes activos", value: `${agents.filter((a) => a.status === "online").length}/${agents.length}` },
+      ]
+
+      const cardW = (contentW - 6) / 3
+      const cardH = 18
+      summaryItems.forEach((item, i) => {
+        const col = i % 3
+        const row = Math.floor(i / 3)
+        const cx = margin + col * (cardW + 3)
+        const cy = y + row * (cardH + 3)
+
+        pdf.setFillColor(245, 245, 245)
+        pdf.roundedRect(cx, cy, cardW, cardH, 2, 2, "F")
+        pdf.setFontSize(8)
+        pdf.setFont("helvetica", "normal")
+        pdf.setTextColor(120, 120, 120)
+        pdf.text(item.label, cx + 3, cy + 6)
+        pdf.setFontSize(14)
+        pdf.setFont("helvetica", "bold")
+        pdf.setTextColor(30, 30, 30)
+        pdf.text(item.value, cx + 3, cy + 14)
+      })
+      y += Math.ceil(summaryItems.length / 3) * (cardH + 3) + 6
+
+      // --- Helper: draw bar chart ---
+      const drawBarChart = (
+        title: string,
+        labels: string[],
+        values: number[],
+        color: [number, number, number],
+        prefix = "",
+        suffix = "",
+      ) => {
+        const chartH = 50
+        checkPage(chartH + 18)
+
+        pdf.setFontSize(11)
+        pdf.setFont("helvetica", "bold")
+        pdf.setTextColor(40, 40, 40)
+        pdf.text(title, margin, y)
+        y += 5
+
+        const maxVal = Math.max(...values, 1)
+        const barAreaW = contentW - 25
+        const barH = Math.min(6, (chartH - 4) / labels.length - 1)
+        const labelW = 25
+
+        labels.forEach((label, i) => {
+          const by = y + i * (barH + 2)
+          pdf.setFontSize(7)
+          pdf.setFont("helvetica", "normal")
+          pdf.setTextColor(80, 80, 80)
+          pdf.text(label, margin, by + barH - 1)
+
+          const bw = Math.max(2, (values[i] / maxVal) * (barAreaW - 30))
+          pdf.setFillColor(...color)
+          pdf.roundedRect(margin + labelW, by, bw, barH, 1, 1, "F")
+
+          pdf.setFontSize(7)
+          pdf.setFont("helvetica", "bold")
+          pdf.setTextColor(60, 60, 60)
+          pdf.text(`${prefix}${values[i].toLocaleString("es-CO")}${suffix}`, margin + labelW + bw + 2, by + barH - 1)
+        })
+
+        y += labels.length * (barH + 2) + 6
+      }
+
+      // --- Product charts ---
+      checkPage(60)
+      pdf.setFontSize(13)
+      pdf.setFont("helvetica", "bold")
+      pdf.setTextColor(60, 60, 60)
+      pdf.text("Productos Vendidos", margin, y)
+      y += 8
+
+      drawBarChart(
+        "Unidades vendidas por producto",
+        productSalesData.map((d) => d.product),
+        productSalesData.map((d) => d.vendidos),
+        [34, 139, 84],
+      )
+
+      drawBarChart(
+        "Ingresos por producto",
+        productSalesData.map((d) => d.product),
+        productSalesData.map((d) => d.ingresos),
+        [59, 130, 196],
+        "$",
+      )
+
+      // --- Agent charts ---
+      checkPage(60)
+      pdf.setFontSize(13)
+      pdf.setFont("helvetica", "bold")
+      pdf.setTextColor(60, 60, 60)
+      pdf.text("Ventas por Agente", margin, y)
+      y += 8
+
+      drawBarChart(
+        "Numero de ventas por agente",
+        agentSalesData.map((d) => d.agent),
+        agentSalesData.map((d) => d.ventas),
+        [217, 158, 28],
+      )
+
+      drawBarChart(
+        "Ingresos por agente",
+        agentSalesData.map((d) => d.agent),
+        agentSalesData.map((d) => d.ingresos),
+        [34, 139, 84],
+        "$",
+      )
+
+      // --- Status distribution ---
+      checkPage(50)
+      pdf.setFontSize(13)
+      pdf.setFont("helvetica", "bold")
+      pdf.setTextColor(60, 60, 60)
+      pdf.text("Distribucion de Contactos por Estado", margin, y)
+      y += 8
+
+      drawBarChart(
+        "",
+        statusDistribution.map((d) => d.status),
+        statusDistribution.map((d) => d.count),
+        [59, 130, 196],
+      )
+
+      // --- Agent performance table ---
+      checkPage(60)
+      pdf.setFontSize(13)
+      pdf.setFont("helvetica", "bold")
+      pdf.setTextColor(60, 60, 60)
+      pdf.text("Desempeno por Agente", margin, y)
+      y += 6
+
+      const headers = ["Agente", "Resueltas", "Pendientes", "Satisfaccion", "Rendimiento"]
+      const colWidths = [45, 30, 30, 35, 40]
+
+      // Table header
+      pdf.setFillColor(240, 240, 240)
+      pdf.rect(margin, y, contentW, 7, "F")
+      pdf.setFontSize(8)
+      pdf.setFont("helvetica", "bold")
+      pdf.setTextColor(80, 80, 80)
+      let hx = margin + 2
+      headers.forEach((h, i) => {
+        pdf.text(h, hx, y + 5)
+        hx += colWidths[i]
+      })
+      y += 8
+
+      // Table rows
+      pdf.setFont("helvetica", "normal")
+      pdf.setTextColor(50, 50, 50)
+      agentPerformance.forEach((agent) => {
+        checkPage(8)
+        let rx = margin + 2
+        pdf.setFontSize(8)
+        pdf.text(agent.name, rx, y + 4)
+        rx += colWidths[0]
+        pdf.text(String(agent.resolved), rx, y + 4)
+        rx += colWidths[1]
+        pdf.text(String(agent.pending), rx, y + 4)
+        rx += colWidths[2]
+        pdf.text(`${agent.satisfaction}%`, rx, y + 4)
+        rx += colWidths[3]
+        pdf.text(`${((agent.resolved / 60) * 100).toFixed(0)}%`, rx, y + 4)
+
+        pdf.setDrawColor(230, 230, 230)
+        pdf.line(margin, y + 6, margin + contentW, y + 6)
+        y += 7
+      })
+
+      y += 4
+
+      // --- Response time data ---
+      checkPage(50)
+      pdf.setFontSize(13)
+      pdf.setFont("helvetica", "bold")
+      pdf.setTextColor(60, 60, 60)
+      pdf.text("Tiempo de Respuesta Promedio", margin, y)
+      y += 8
+
+      drawBarChart(
+        "",
+        responseTimeData.map((d) => d.hour),
+        responseTimeData.map((d) => d.time * 10),
+        [34, 139, 84],
+      )
+      pdf.setFontSize(7)
+      pdf.setFont("helvetica", "italic")
+      pdf.setTextColor(130, 130, 130)
+      pdf.text("* Valores en minutos (escala x10 para visualizacion)", margin, y)
+      y += 6
+
+      // --- Footer ---
+      const totalPages = pdf.getNumberOfPages()
+      for (let i = 1; i <= totalPages; i++) {
+        pdf.setPage(i)
+        pdf.setFontSize(8)
+        pdf.setFont("helvetica", "normal")
+        pdf.setTextColor(160, 160, 160)
+        pdf.text(`ChatFlow CRM - Pagina ${i} de ${totalPages}`, pageW / 2, pageH - 8, { align: "center" })
+      }
+
       pdf.save(`reporte-chatflow-${now.toISOString().split("T")[0]}.pdf`)
     } catch (error) {
       console.error("Error generating PDF:", error)
     } finally {
       setIsGeneratingPDF(false)
     }
-  }, [isGeneratingPDF])
+  }, [isGeneratingPDF, totalResolved, totalPending, totalProductsSold, totalRevenue, avgSatisfaction, statusDistribution])
 
   return (
     <div className="flex flex-col gap-6">
@@ -199,7 +367,7 @@ export function ReportsView() {
       </div>
 
       {/* Report content area - captured for PDF */}
-      <div ref={reportContentRef} className="flex flex-col gap-6">
+      <div className="flex flex-col gap-6">
         {/* Summary cards */}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div className="rounded-xl border border-border bg-card p-5 shadow-sm">

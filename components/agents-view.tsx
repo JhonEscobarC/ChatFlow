@@ -165,7 +165,7 @@ export function AgentsView() {
                       (sum, a) => sum + a.stats.conversationsHandled,
                       0,
                     )
-                    .toLocaleString()}
+                    .toLocaleString("es-CO")}
                 </span>
               </div>
             </div>

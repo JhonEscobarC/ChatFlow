@@ -24,6 +24,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -272,6 +273,9 @@ export function ContactsView() {
                     <DialogContent className="sm:max-w-md">
                       <DialogHeader>
                         <DialogTitle>Detalle del contacto</DialogTitle>
+                        <DialogDescription className="sr-only">
+                          Informacion detallada del contacto seleccionado
+                        </DialogDescription>
                       </DialogHeader>
                       {selectedContact && selectedContact.id === contact.id && (
                         <ContactDetailContent

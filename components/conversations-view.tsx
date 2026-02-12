@@ -25,6 +25,7 @@ import {
   User,
   Headphones,
   ArrowLeft,
+  FileDown,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -40,6 +41,7 @@ export function ConversationsView() {
   const [search, setSearch] = useState("")
   const [messageInput, setMessageInput] = useState("")
   const [showMobileChat, setShowMobileChat] = useState(false)
+  const [isExportingPDF, setIsExportingPDF] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const contactsWithMessages = useMemo(() => {
@@ -97,6 +99,182 @@ export function ConversationsView() {
   const handleSelectContact = (contact: Contact) => {
     setSelectedContact(contact)
     setShowMobileChat(true)
+  }
+
+  const handleExportConversationPDF = async (contact: Contact) => {
+    if (isExportingPDF) return
+    setIsExportingPDF(true)
+
+    try {
+      const jsPDFModule = await import("jspdf")
+      const { jsPDF } = jsPDFModule
+
+      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" })
+      const pageW = 210
+      const pageH = 297
+      const margin = 15
+      const contentW = pageW - margin * 2
+      let y = margin
+
+      const checkPage = (needed: number) => {
+        if (y + needed > pageH - margin) {
+          pdf.addPage()
+          y = margin
+        }
+      }
+
+      // --- Header ---
+      pdf.setFillColor(22, 163, 74)
+      pdf.rect(0, 0, pageW, 32, "F")
+      pdf.setTextColor(255, 255, 255)
+      pdf.setFontSize(18)
+      pdf.setFont("helvetica", "bold")
+      pdf.text("ChatFlow - Informe de Conversacion", margin, 14)
+      pdf.setFontSize(10)
+      pdf.setFont("helvetica", "normal")
+      const now = new Date()
+      pdf.text(
+        `Generado: ${now.toLocaleDateString("es-CO")} ${now.toLocaleTimeString("es-CO")}`,
+        margin,
+        22,
+      )
+      y = 40
+
+      // --- Client info card ---
+      pdf.setFillColor(245, 245, 245)
+      pdf.roundedRect(margin, y, contentW, 42, 3, 3, "F")
+
+      pdf.setFontSize(12)
+      pdf.setFont("helvetica", "bold")
+      pdf.setTextColor(22, 163, 74)
+      pdf.text("Datos del Cliente", margin + 5, y + 8)
+
+      pdf.setFontSize(9)
+      pdf.setFont("helvetica", "normal")
+      pdf.setTextColor(60, 60, 60)
+
+      const statusLabels: Record<string, string> = {
+        activo: "Activo",
+        inactivo: "Inactivo",
+        prospecto: "Prospecto",
+        nuevo: "Nuevo",
+        cerrado: "Cerrado",
+        seguimiento: "Seguimiento",
+        asesorando: "Asesorando",
+      }
+
+      const fields = [
+        { label: "Nombre", value: contact.name },
+        { label: "Empresa", value: contact.company },
+        { label: "Telefono", value: contact.phone },
+        { label: "Email", value: contact.email },
+        { label: "Pais", value: contact.country },
+        { label: "Estado", value: statusLabels[contact.status] || contact.status },
+        { label: "Agente asignado", value: contact.agent || "Sin asignar" },
+      ]
+
+      const col1X = margin + 5
+      const col2X = margin + contentW / 2 + 5
+      fields.forEach((field, i) => {
+        const col = i % 2
+        const row = Math.floor(i / 2)
+        const fx = col === 0 ? col1X : col2X
+        const fy = y + 14 + row * 7
+
+        pdf.setFont("helvetica", "bold")
+        pdf.setTextColor(100, 100, 100)
+        pdf.text(`${field.label}:`, fx, fy)
+        pdf.setFont("helvetica", "normal")
+        pdf.setTextColor(40, 40, 40)
+        pdf.text(field.value, fx + pdf.getTextWidth(`${field.label}: `) + 1, fy)
+      })
+
+      y += 50
+
+      // --- Conversation content ---
+      const convMessages = messages
+        .filter((m) => m.contactId === contact.id)
+        .sort(
+          (a, b) =>
+            new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+        )
+
+      checkPage(12)
+      pdf.setFontSize(12)
+      pdf.setFont("helvetica", "bold")
+      pdf.setTextColor(22, 163, 74)
+      pdf.text(`Conversacion (${convMessages.length} mensajes)`, margin, y)
+      y += 7
+
+      convMessages.forEach((msg) => {
+        const senderLabel =
+          msg.sender === "contact"
+            ? "Cliente"
+            : msg.sender === "bot"
+              ? "Bot"
+              : "Agente"
+        const timeStr = new Date(msg.timestamp).toLocaleTimeString("es-CO", {
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+
+        // Calculate needed height
+        pdf.setFontSize(8)
+        const wrappedLines = pdf.splitTextToSize(msg.content, contentW - 10)
+        const msgHeight = 10 + wrappedLines.length * 4
+        checkPage(msgHeight)
+
+        // Sender colors
+        let bgR = 240, bgG = 240, bgB = 240
+        let labelR = 80, labelG = 80, labelB = 80
+        if (msg.sender === "bot") {
+          bgR = 239; bgG = 246; bgB = 255
+          labelR = 37; labelG = 99; labelB = 235
+        } else if (msg.sender === "agent") {
+          bgR = 240; bgG = 253; bgB = 244
+          labelR = 22; labelG = 163; labelB = 74
+        }
+
+        pdf.setFillColor(bgR, bgG, bgB)
+        pdf.roundedRect(margin, y, contentW, msgHeight, 2, 2, "F")
+
+        pdf.setFontSize(8)
+        pdf.setFont("helvetica", "bold")
+        pdf.setTextColor(labelR, labelG, labelB)
+        pdf.text(`${senderLabel} - ${msg.senderName}`, margin + 4, y + 5)
+
+        pdf.setFont("helvetica", "normal")
+        pdf.setTextColor(140, 140, 140)
+        pdf.text(timeStr, margin + contentW - 20, y + 5)
+
+        pdf.setTextColor(40, 40, 40)
+        pdf.setFontSize(9)
+        pdf.text(wrappedLines, margin + 4, y + 10)
+
+        y += msgHeight + 3
+      })
+
+      // --- Footer ---
+      const totalPages = pdf.getNumberOfPages()
+      for (let i = 1; i <= totalPages; i++) {
+        pdf.setPage(i)
+        pdf.setFontSize(8)
+        pdf.setFont("helvetica", "normal")
+        pdf.setTextColor(160, 160, 160)
+        pdf.text(
+          `ChatFlow CRM - Conversacion con ${contact.name} - Pagina ${i} de ${totalPages}`,
+          pageW / 2,
+          pageH - 8,
+          { align: "center" },
+        )
+      }
+
+      pdf.save(`conversacion-${contact.name.toLowerCase().replace(/\s+/g, "-")}-${now.toISOString().split("T")[0]}.pdf`)
+    } catch (error) {
+      console.error("Error generating conversation PDF:", error)
+    } finally {
+      setIsExportingPDF(false)
+    }
   }
 
   return (
@@ -239,6 +417,17 @@ export function ConversationsView() {
                       ))}
                     </SelectContent>
                   </Select>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    title="Exportar conversacion a PDF"
+                    disabled={isExportingPDF}
+                    onClick={() => handleExportConversationPDF(selectedContact)}
+                  >
+                    <FileDown className={cn("h-4 w-4", isExportingPDF && "animate-pulse")} />
+                    <span className="sr-only">Exportar conversacion a PDF</span>
+                  </Button>
                   <Button variant="ghost" size="icon" className="h-8 w-8">
                     <Phone className="h-4 w-4" />
                   </Button>

@@ -73,7 +73,7 @@ export function DashboardView() {
           iconColor="text-blue-500"
         />
         <StatCard
-          title="Nuevos Prospectos"
+          title="Nuevos Clientes"
           value={statsData.newProspects}
           trend={statsData.prospectsTrend}
           icon={UserPlus}

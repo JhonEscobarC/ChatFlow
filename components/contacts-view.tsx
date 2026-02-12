@@ -28,7 +28,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-import { Search, ChevronLeft, ChevronRight, UserPlus, Eye, AlertCircle } from "lucide-react"
+import { Search, ChevronLeft, ChevronRight, Eye, AlertCircle } from "lucide-react"
 
 const statusColorMap: Record<ContactStatus, string> = {
   activo: "bg-primary/10 text-primary border-primary/20",
@@ -136,10 +136,7 @@ export function ContactsView() {
             Gestiona todos tus contactos y prospectos de WhatsApp
           </p>
         </div>
-        <Button className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90">
-          <UserPlus className="h-4 w-4" />
-          Nuevo contacto
-        </Button>
+
       </div>
 
       {/* Status tabs */}
@@ -425,9 +422,9 @@ function ContactDetailContent({
         {isAsesorando && (
           <div className="mt-2 flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 p-2.5">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-blue-600" />
-            <p className="text-xs text-blue-700">
+            <div className="text-xs text-blue-700">
               Los contactos en estado <strong>Asesorando</strong> deben tener siempre un agente asignado.
-            </p>
+            </div>
           </div>
         )}
       </div>

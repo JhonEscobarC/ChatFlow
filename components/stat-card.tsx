@@ -33,7 +33,7 @@ export function StatCard({
         <span className="text-sm font-medium text-muted-foreground">{title}</span>
         <div className="flex items-center gap-2">
           <span className="text-2xl font-bold text-card-foreground">
-            {typeof value === "number" ? value.toLocaleString() : value}
+            {typeof value === "number" ? value.toLocaleString("es-CO") : value}
           </span>
           {trend !== undefined && (
             <span
